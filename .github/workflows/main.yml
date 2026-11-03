@@ -1,0 +1,2 @@
+cd ~/claudefish/Co_Vua_ClaudeFish_package
+bash build-wasm.sh
