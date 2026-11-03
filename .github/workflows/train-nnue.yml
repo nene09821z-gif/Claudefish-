@@ -1,0 +1,57 @@
+# Train a bigger ClaudeFish NNUE on GitHub's runners (no PC needed).
+# Run it from the Actions tab -> "Train NNUE" -> Run workflow. Download the "claudefish-net" artifact when done.
+name: Train NNUE
+on:
+  workflow_dispatch:
+    inputs:
+      games_per_shard:
+        description: "Self-play games per shard (4 shards x 3 processes)"
+        default: "6000"
+      nodes:
+        description: "Nodes per move for labelling"
+        default: "5000"
+      epochs:
+        description: "Training epochs"
+        default: "30"
+jobs:
+  datagen:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build engine
+        run: g++ -O3 -march=native -std=c++17 -pthread -o claudefish claudefish3.cpp
+      - name: Generate data (3 parallel processes)
+        run: |
+          for i in 1 2 3; do
+            ( printf "datagen games ${{ inputs.games_per_shard }} nodes ${{ inputs.nodes }} depth 14 seed $(( ${{ matrix.shard }} * 10 + i )) file data_${{ matrix.shard }}_$i.txt\nquit\n" | ./claudefish > /dev/null ) &
+          done
+          wait
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-${{ matrix.shard }}
+          path: data_*.txt
+  train:
+    needs: datagen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: data-*
+          merge-multiple: true
+      - name: Build trainer
+        run: g++ -O3 -march=native -std=c++17 -pthread -o cf_train train.cpp
+      - name: Train
+        run: |
+          ARGS=""
+          for f in data_*.txt; do ARGS="$ARGS --data $f"; done
+          ./cf_train $ARGS --out claudefish.nnue --epochs ${{ inputs.epochs }} --threads $(nproc)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claudefish-net
+          path: |
+            claudefish.nnue
+            claudefish.nnue.f32
